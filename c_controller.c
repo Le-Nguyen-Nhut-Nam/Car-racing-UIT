@@ -35,7 +35,7 @@
 #define OUT_SIGNAL 6
 #define OTHER 7
 #define MAX_SPEED_1 80
-#define MAX_SPEED_2 30
+#define MAX_SPEED_2 40
 
 
 // IR Ground Sensors
@@ -49,47 +49,202 @@ WbDeviceTag left_motor, right_motor;
 
 // Khai báo biến
 unsigned short gs_value[NB_GROUND_SENS] = {350, 350, 350, 350, 350, 350, 350, 350};
-unsigned char filted = 0b00000000;
-unsigned char preFilted = 0b00000000;
 short pos = MID;
 float LeftSum,MidSum,RightSum=0;
 float LeftSpeed=0;
 float RightSpeed=0;
 
-float PreviousLeftSum,PreviousRightSum;
+float PreviousLeftSpeed=0;
+float PreviousRightSpeed=0;
+
+float CurrentLeftEdge,CurrentRightEdge,PreviousLeftEdge,PreviousRightEdge;
 
 
 // Danh sách các flag cần thiết cho sử lý
-short FlagPrepareChallenge=-1;
-short FlagTrackIntoChallenge=0;
-short FlagSlowDown=0;
-short FlagInChallenge=0;
-short FlagOutChallenge=0;
+short FlagPrepareChallenge=-1; // chuẩn bị vào thử thách
+short FlagTrackIntoChallenge=0; // con đường ngắn đi vào thử thách
+short FlagSlowDown=0; // đi chậm lại
+short FlagInChallenge=0; // Đi vào thử thách
+short FlagOutChallenge=0; // đi ra thử thách
+short FlagBlurSignal=0; // Flag tín hiệu mờ
 
 short FlagIntoCircle=0; // flag này chỉ dành riêng cho vòng tròn
-short ConditionJump=-1;
+short ConditionJump=-1; // Điều kiện nhảy để xử lí
+
+// Danh sách các hàm dùng để xác định tín hiệu
+
+  bool IsFullSignal()
+  {
+    switch(FlagBlurSignal)
+    {
+    case 0:
+    {
+    if(LeftSum>850 && MidSum>600 && RightSum>850)
+      return true;
+    else
+      return false;
+    }
+    break;
+    printf("hello world");
+    case 1:
+    {
+     if(LeftSum>500 && MidSum>300 && RightSum>500)
+      return true;
+    else
+      return false;
+      
+    } 
+    break;
+    }
+  }
+  
+  bool IsLeftHalfFullSignal()
+  {
+  switch(FlagBlurSignal)
+  {
+  case 0:
+  {
+    if(LeftSum>1100 && MidSum> 500)
+      return true;
+    else
+      return false;
+  }
+  break;
+  
+  case 1:
+  {
+  if(LeftSum>500 && MidSum> 200)
+      return true;
+    else
+      return false;
+  }
+  break;
+  }
+  }
+  
+  bool IsRightHalfFullSignal()
+  {
+  switch(FlagBlurSignal)
+    {
+    case 0:
+      {
+    if(MidSum > 500 && RightSum>1100)
+      return true;
+    else
+      return false;
+      }
+  break;
+    
+    case 1:
+    {
+    if(MidSum > 300 && RightSum>600)
+      return true;
+    else
+      return false;
+    }
+    break;
+  
+    }
+  }
+  bool IsOutSignal()
+  {
+    if((LeftSum>400 && MidSum > 800 && RightSum>400) ||
+        (LeftSum>300 && MidSum > 600 && RightSum>300)
+        || (LeftSum>600 && MidSum<100 && RightSum>600))
+      return true;
+    else
+      return false;
+  }
+  bool IsBlankSignal()
+  {
+  if(LeftSum<100 && MidSum<100 && RightSum<100)
+    return true;
+  else
+    return false;
+  }
+  
+  bool IsMidSignal()
+  {
+  if(LeftSum<300 && MidSum>400 && RightSum<300)
+    return true;
+  else
+    return false;
+  }
+  bool IsOutLine()
+  {
+  if(((PreviousLeftEdge - CurrentLeftEdge) > 300 ||
+      (PreviousRightEdge - CurrentRightEdge)>300) &&
+       IsBlankSignal())
+    return true;
+  else
+    return false;
+  }
+  void IsBlurSignal()
+  {
+  if(gs_value[0] <100 || gs_value[6] < 100)
+    FlagBlurSignal=1;
+  else
+    FlagBlurSignal=0;
+  }
 
 // Hàm xác định tín hiệu
 short DetectChallenge()
 {
-  if(LeftSum>850 && MidSum>600 && RightSum>850) // tín hiệu full signal
+IsBlurSignal();
+
+  if(IsOutLine())
     return 0;
-  else if(LeftSum>1000 && MidSum> 400) // tín hiệu rẽ nữa trái
+ else if(IsFullSignal()) // tín hiệu full signal
     return 1;
-  else if(MidSum > 400 && RightSum>1000) // tín hiệu rẽ nữa phải
+  else if(IsLeftHalfFullSignal()) // tín hiệu rẽ nữa trái
     return 2;
+  else if(IsRightHalfFullSignal()) // tín hiệu rẽ nữa phải
+    return 3;
   else return -1; // không có tín hiệu thử thách, đường cong của vòng tròn.
 }
 //Xác dịnh tín hiệu và flag dành cho ngã tư, cua vuông
+short DetectOutLine()
+{
+  if(IsBlankSignal())
+    return BLANK_SIGNAL;
+  else if(IsMidSignal())
+    return MID;
+}
+void SwitchConditionOutLine()
+{
+  pos=DetectOutLine();
+  switch(ConditionJump)
+  {
+  case -1:
+   ConditionJump = 0;
+   FlagSlowDown = 1;
+  break;
+  
+  case 0:
+    if((pos==BLANK_SIGNAL && ConditionJump==0) || pos==MID)
+      ConditionJump=1;
+  break;
+  
+  case 1:
+    if(pos==MID && ConditionJump==1)
+    {
+      ConditionJump=-1;
+      FlagPrepareChallenge=-1;
+      FlagSlowDown=1;
+    }
+  break;
+  
+  }
+}
 short DetectIntersectionSignal()
 {
-  if(LeftSum>800 && MidSum>600 && RightSum>800) // tín hiệu full signal
-    return FULL_SIGNAL;
-  else if(LeftSum<100 && MidSum<100 && RightSum<100)
+  
+  if(IsBlankSignal())
     return BLANK_SIGNAL; // Tín hiệu trống.
-  else if(LeftSum<300 && MidSum>400 && RightSum<300)
+  else if(IsMidSignal())
     return MID; // tín hiệu đã trở về đường chính
 }
+
 void SwitchConditionIntersection()
 {
 pos = DetectIntersectionSignal();
@@ -101,23 +256,11 @@ switch (ConditionJump)
     break;
  case 0:
     if(pos==BLANK_SIGNAL)
-      ConditionJump=2;
-    else if (pos==MID && ConditionJump==0)
-    {
-     ConditionJump = 1;
-     FlagTrackIntoChallenge = 1;
-    }
+      ConditionJump=1;
     break;
 
  case 1:
-    if (pos == FULL_SIGNAL && ConditionJump==1)  // Thoát khỏi thử thách
-    {
-     ConditionJump = 2;
-     FlagInChallenge = FlagOutChallenge = 1;
-    }
-    break;
- case 2:
-    if (pos == MID && ConditionJump == 2)
+    if (pos == MID && ConditionJump == 1)
     {
      ConditionJump = FlagPrepareChallenge= -1;
      FlagSlowDown = FlagTrackIntoChallenge = FlagInChallenge = FlagOutChallenge = 0;
@@ -128,13 +271,13 @@ switch (ConditionJump)
 // Xác  định tín hiệu và flag dành cho vòng tròn
 short DetectCircleSignal()
 {
-   if(LeftSum>800 && MidSum>600 && RightSum>800)
+   if(IsFullSignal())
      return FULL_SIGNAL; // tín hiệu vào vòng tròn
      
-   else if(LeftSum>400 && MidSum>400 && RightSum>800)
+   else if(IsOutSignal())
      return OUT_SIGNAL; // tín hiệu ra vòng tròn
      
-   else if(LeftSum<300 && MidSum>400 && RightSum<300)
+   else if(IsMidSignal())
      return MID; // tín hiệu đã trở về đường chính  
 }
 void SwitchConditionCircle()
@@ -204,12 +347,18 @@ void ClassifySignal()
     switch(FlagPrepareChallenge)
     {
       case 0:
+      SwitchConditionOutLine();
+      break;
+      
+      case 1:
       SwitchConditionCircle();
       break;
-      case 1:
+      
+      case 2:
       SwitchConditionIntersection();
       break;
-      case 2:
+      
+      case 3:
       SwitchConditionIntersection();
       break;
     }
@@ -220,18 +369,34 @@ void Constrains()
 {
   if(LeftSpeed<0)
     LeftSpeed=0;
-  else if(LeftSpeed > 80)
-    LeftSpeed=80;
+  else if(LeftSpeed > 100)
+    LeftSpeed=100;
   if(RightSpeed<0)
     RightSpeed=0;
-  else if(RightSpeed>80)
-    RightSpeed=80;
+  else if(RightSpeed>100)
+    RightSpeed=100;
+}
+
+void ControlOutLineZone()
+{
+/*
+  if(PreviousLeftSpeed>PreviousRightSpeed)
+  {
+    LeftSpeed=50;
+    RightSpeed=0;
+  }
+  else
+  {
+    LeftSpeed=0;
+    RightSpeed=50;
+  }
+  */
 }
 
 void ControlNormalZone() // không cần sử dụng đạo hàm vì xử lí hiện tại đã ổn định
-{                        // việc thêm đạo hàm và tính phân gây phức tạp cho thuật toán
+{                        
   LeftSpeed=MAX_SPEED_1 - 0.15*LeftSum ;
-  RightSpeed=MAX_SPEED_1 - 0.15*RightSum ;
+  RightSpeed=MAX_SPEED_1 - 0.15*RightSum ;  
 }
 void ControlCircleZone()
 {	
@@ -264,39 +429,29 @@ void ControlIntersectionZone()
 {
   switch(FlagPrepareChallenge)
   {
-    case 1:
+    case 2:
     switch(ConditionJump)
     {   
       case 0:
-      LeftSpeed = MAX_SPEED_2 ;
-      RightSpeed = MAX_SPEED_2;
+      LeftSpeed = MAX_SPEED_2;
+      RightSpeed = MAX_SPEED_2 ;
       break;
-      
+
       case 1:
-      LeftSpeed = MAX_SPEED_2 - 0.09 * LeftSum;
-      RightSpeed = MAX_SPEED_2 - 0.09 * RightSum;
-      break;
-      
-      case 2:
       LeftSpeed=0;
       RightSpeed=MAX_SPEED_2;
       break;      
     }
     break;
-    case 2:
+    case 3:
     switch(ConditionJump)
     {   
       case 0:
-      LeftSpeed = MAX_SPEED_2 - 0.09 * LeftSum;
-      RightSpeed = MAX_SPEED_2 - 0.09 * RightSum;
+      LeftSpeed = MAX_SPEED_2;
+      RightSpeed = MAX_SPEED_2 ;
       break;
-      
+
       case 1:
-      LeftSpeed = MAX_SPEED_2 - 0.09 * LeftSum;
-      RightSpeed = MAX_SPEED_2 - 0.09 * RightSum;
-      break;
-      
-      case 2:
       LeftSpeed=MAX_SPEED_2;
       RightSpeed=0;
       break;      
@@ -314,14 +469,18 @@ void Control()
     break;
     
     case 0:
-    ControlCircleZone();
+    ControlOutLineZone();
     break;
     
     case 1:
-    ControlIntersectionZone();
+    ControlCircleZone();
     break;
     
     case 2:
+    ControlIntersectionZone();
+    break;
+    
+    case 3:
     ControlIntersectionZone();
     break;
   }
@@ -332,28 +491,28 @@ void Control()
 void PrintData()
 {
     printf("\n");
-    printf("Left Speed: %f", LeftSpeed);
-    printf("                           ");
-    printf("Right Speed: %f", RightSpeed);
-    printf("\n");
-    printf("Left Sum: %f",LeftSum);
-    printf("                           ");
-    printf("Mid Sum: %f",MidSum);
-    printf("                           ");
-    printf("Right Sum: %f",RightSum);
+     printf("Left Speed: %f", LeftSpeed);
+     printf("                           ");
+     printf("Right Speed: %f", RightSpeed);
+     printf("\n");
+     printf("Left Sum: %f",LeftSum);
+     printf("                           ");
+     printf("Mid Sum: %f",MidSum);
+     printf("                           ");
+     printf("Right Sum: %f",RightSum);
     
-    printf("\n");
-    printf("Flag Prepare Challenge: %d",FlagPrepareChallenge);
-    printf("\n");
-    printf("Flag Slow Down: %d", FlagSlowDown);
-    printf("\n");
-    printf("Flag In Challenge: %d", FlagInChallenge);
-    printf("\n");
-    printf("Flag Out Challenge: %d", FlagOutChallenge);
-    printf("\n");
-    printf("Condition Jump: %d",ConditionJump);
-    printf("\n \n  ");
-     
+     printf("\n");
+    // printf("Flag Prepare Challenge: %d",FlagPrepareChallenge);
+    // printf("\n");
+    // printf("Flag Slow Down: %d", FlagSlowDown);
+    // printf("\n");
+    // printf("Flag In Challenge: %d", FlagInChallenge);
+    // printf("\n");
+    // printf("Flag Out Challenge: %d", FlagOutChallenge);
+    // printf("\n");
+    // printf("Condition Jump: %d",ConditionJump);
+    // printf("\n \n  ");
+    return ;
 };
 // Tính tổng từng bên.
 void CalculateSum(int i, short Value)
@@ -362,6 +521,7 @@ void CalculateSum(int i, short Value)
   {
   case 0:
   LeftSum =  LeftSum +  Value - 130;
+  CurrentLeftEdge=Value-130;
   break;
   case 1:
   LeftSum =  LeftSum + Value - 130;
@@ -385,6 +545,7 @@ void CalculateSum(int i, short Value)
   break;
   case 7:
   RightSum = RightSum + Value - 130;
+  CurrentRightEdge=Value;
   break;
   }
 }
@@ -408,7 +569,8 @@ void ReadSensors(void)
 /*
  * This is the main program.
  */
-int main() {
+int main() 
+{
 
   /* necessary to initialize webots stuff */
   wb_robot_init();
@@ -450,15 +612,16 @@ int main() {
     Control();  
     Constrains();
     PrintData();
-    // Lấy các giá trị LeftSum,RightSum phía trước để tính đạo hàm
-    PreviousLeftSum=LeftSum;
-    PreviousRightSum=RightSum;
+    // Lấy các giá trị LeftSum,RightSum.LeftSpeed,RightSpeed
+    PreviousLeftEdge=CurrentLeftEdge;
+    PreviousRightEdge=CurrentRightEdge;
       
-    // Giới hạn tốc độ
+    PreviousLeftSpeed=LeftSpeed;
+    PreviousRightSpeed=RightSpeed;
     
     // Trả lại MIdSum, LeftSum, RightSum = 0
     MidSum=LeftSum=RightSum=0;
-    wb_motor_set_velocity(left_motor, LeftSpeed);
+     wb_motor_set_velocity(left_motor, LeftSpeed);
     wb_motor_set_velocity(right_motor,RightSpeed);
     
     
